@@ -1,0 +1,51 @@
+# ── Snakemake ────────────────────────────────────────────────────────────────
+.snakemake/
+snakemake.log
+*.snakemake.log
+
+# ── Pipeline data (large, reproducible) ──────────────────────────────────────
+data/
+results/
+tmp_*/                  # MMseqs2 temp dirs (tmp_90pct/, tmp_50pct/, etc.)
+
+# ── Downloaded resources (re-downloadable) ───────────────────────────────────
+resources/GRCh38*.fa
+resources/GRCh38*.fai
+resources/GRCh38_db*
+resources/assembly_summary.txt
+
+# Keep the HMM profile — it's small and pipeline-critical
+!resources/PF07508.hmm
+
+# ── Conda environments (built locally) ───────────────────────────────────────
+.conda/
+envs/*/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+*.err
+*.out
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+
+# ── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
