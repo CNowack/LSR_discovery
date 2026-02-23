@@ -1,0 +1,4 @@
+name: mgefinder
+channels: [bioconda, conda-forge]
+dependencies:
+  - mgefinder=1.0.6

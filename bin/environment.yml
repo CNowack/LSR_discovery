@@ -1,0 +1,11 @@
+name: recombinase_search
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - genomesearch
+  - python=3.13
+  - numpy=1.24
+  - pandas=2.0
+  - matplotlib
+  - pip

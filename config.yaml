@@ -1,0 +1,33 @@
+# Genome sources
+refseq_assembly_summary: "https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt"
+genomes_dir: "data/genomes"
+batch_size: 20  # 50 for first batch, 20 thereafter (per paper)
+
+# HMMER settings
+recombinase_hmm: "resources/PF07508.hmm"
+hmmer_evalue: 1e-5
+
+# MGEfinder settings
+min_ani: 0.95  # 95% ANI cutoff for same-species comparison (FastANI)
+
+# Clustering thresholds
+cluster_identity_90: 0.90
+cluster_identity_50: 0.50
+
+# LSR quality filters (from Durant et al 2022)
+lsr_min_length_aa: 400
+lsr_max_length_aa: 650
+att_center_max_bp: 20
+max_ambiguous_nt_pct: 0.05
+max_ambiguous_aa_pct: 0.05
+max_mge_size_kb: 200
+max_dist_lsr_to_att_bp: 500
+
+# BLAST for genome-targeting LSRs
+blast_evalue: 1e-3
+human_genome: "resources/GRCh38.fa"
+
+threads: 8
+
+test_mode: true
+test_genome_csv: "resources/test_genomes.csv"
