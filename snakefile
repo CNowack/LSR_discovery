@@ -380,3 +380,28 @@ rule compile_lsr_database:
     output:
         database="results/lsr_database.tsv",
     script: "scripts/compile_database.py"
+
+rule validate_test_results:
+    input:
+        database="results/lsr_database.tsv",
+        test_csv=config["test_genome_csv"]
+    output:
+        report="results/test_validation_report.txt"
+    run:
+        import pandas as pd
+        expected = pd.read_csv(input.test_csv)
+        found    = pd.read_csv(input.database, sep="\t")
+
+        lines = []
+        for _, row in expected.iterrows():
+            acc  = row["accession"]
+            exp  = row["expected_lsr"]
+            hits = found[found["source_genome"] == acc]
+            detected = len(hits) > 0
+            status = "PASS" if (detected == exp or exp == "Unknown") else "FAIL"
+            lines.append(f"{status}\t{acc}\t{row['label']}\texpected={exp}\tdetected={detected}\thits={len(hits)}")
+
+        with open(output.report, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        
+        print(open(output.report).read())
