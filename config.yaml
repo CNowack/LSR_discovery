@@ -29,5 +29,6 @@ human_genome: "resources/GRCh38.fa"
 
 threads: 8
 
+# Use this mode during validation for testing a set list of genomes
 test_mode: true
 test_genome_csv: "resources/test_genomes.csv"

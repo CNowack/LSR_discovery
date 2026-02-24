@@ -9,11 +9,14 @@ see (https://github.com/bhattlab/GenomeSearch)
 The original study mined 194,585 bacterial genomes to identify 6,207 large serine recombinases (LSRs) and their cognate attachment sites, expanding known LSR diversity more than 100-fold. This pipeline reproduces that discovery workflow using Snakemake.
 
 ---
-Added test_mode to specify input genomes to validate pipeline.
+## Additions:
+* Added test_mode to specify input genomes to validate pipeline.
+
 
 ---
 
 ## Scripts
+### (run in this order)
 
 **`scripts/group_by_species.py`**
 Reads the RefSeq assembly summary and groups genomes by species using NCBI taxonomy. Outputs a TSV mapping each species to its list of genome accessions, and splits those into batches (50 for first batch, 20 thereafter). This drives all downstream wildcard expansion.

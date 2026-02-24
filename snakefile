@@ -3,24 +3,31 @@ configfile: "config.yaml"
 import pandas as pd
 
 # ── Test mode: load genomes from CSV instead of querying RefSeq ──────────────
-if config.get("test_mode") and config.get("test_genome_csv"):
+
+if config.get("test_mode"):
     _test_df = pd.read_csv(config["test_genome_csv"])
-    GENOMES   = _test_df["accession"].tolist()
-    LABELS    = dict(zip(_test_df["accession"], _test_df["label"]))
-    EXPECTED  = dict(zip(_test_df["accession"], _test_df["expected_lsr"]))
-    BATCHES   = ["test_batch"]   # single batch for test runs
+    GENOMES = _test_df["label"].tolist()  # MUST BE LABELS
+    LABEL_TO_ACC = dict(zip(_test_df["label"], _test_df["accession"]))
+    BATCHES = ["test_batch"]
 else:
-    GENOMES  = []   # populated by checkpoint after download
+    # In production, these will be handled by a checkpoint
+    GENOMES  = []   
     BATCHES  = []
 
+FINAL_OUTPUTS = [
+    "results/lsr_database.tsv",
+    "results/att_sites.fa",
+    "results/lsr_clusters_50pct.tsv",
+    "results/specificity_predictions.tsv",
+    "results/genome_targeting_candidates.tsv"
+]
+
+if config.get("test_mode"):
+    FINAL_OUTPUTS.append("results/test_validation_report.txt")
+
+
 rule all:
-    input:
-        "results/lsr_database.tsv",
-        "results/att_sites.fa",
-        "results/lsr_clusters_50pct.tsv",
-        "results/specificity_predictions.tsv",
-        "results/genome_targeting_candidates.tsv"
-        *( ["results/test_validation_report.txt"] if config.get("test_mode") else [] )
+    input: FINAL_OUTPUTS
 
 
 # ── Step 1: Download and group genomes by species ──────────────────────────
@@ -40,20 +47,43 @@ rule group_genomes_by_species:
     script:
         "scripts/group_by_species.py"
 
+rule create_related_list:
+    input:
+        # This ensures the genomes are actually there before we list them
+        done = "data/genomes/{batch_id}/download.done"
+    output:
+        "data/related/{batch_id}/{genome}_related.txt"
+    run:
+        import os
+        # Look at the actual files on disk in the batch folder
+        batch_dir = os.path.dirname(input.done)
+        all_fna = [os.path.join(batch_dir, f) for f in os.listdir(batch_dir) if f.endswith('.fna')]
+        
+        # Exclude the current genome (the 'query') from the 'relatives' list
+        current_fna = os.path.join(batch_dir, f"{wildcards.genome}.fna")
+        related = [os.path.abspath(f) for f in all_fna if os.path.abspath(f) != os.path.abspath(current_fna)]
+        
+        with open(output[0], "w") as f:
+            f.write("\n".join(related))
+
 rule download_genome_batch:
-    input: "data/species_batches.tsv"
-    output: "data/genomes/{batch_id}/download.done"
+    input: 
+        # If test_mode, we don't need the species map from RefSeq
+        species_map = config["test_genome_csv"] if config.get("test_mode") else "data/species_batches.tsv"
+    output: 
+        filenames = expand("data/genomes/{{batch_id}}/{genome}.fna", genome=GENOMES),
+        done = "data/genomes/{batch_id}/download.done"
     params:
-        outdir="data/genomes/{batch_id}"
+        outdir = "data/genomes/{batch_id}",
+        acc_mapping = lambda w: ",".join([f"{k}:{v}" for k, v in LABEL_TO_ACC.items()])
     shell:
         """
         mkdir -p {params.outdir}
-        # Download genomes listed for this batch
         python scripts/download_genomes.py \
             --batch {wildcards.batch_id} \
-            --species-map {input} \
+            --mapping "{params.acc_mapping}" \
             --outdir {params.outdir}
-        touch {output}
+        touch {output.done}
         """
 
 
@@ -124,7 +154,7 @@ rule mgefinder_wholegenome:
     """
     input:
         lsr_genome="data/genomes/{batch_id}/{genome}.fna",
-        related_genomes="data/related/{genome}_related.txt",
+        related_genomes="data/related/{batch_id}/{genome}_related.txt",
         done="data/genomes/{batch_id}/download.done"
     output:
         boundaries="data/mgefinder/{batch_id}/{genome}/mge_boundaries.tsv",
@@ -286,6 +316,18 @@ rule predict_specificity:
         min_lsr_clusters_per_target=3  # minimum to call a target gene cluster
     script: "scripts/predict_specificity.py"
 
+# ── Step pre-10: Collect all predicted att sites ────────
+
+rule aggregate_att_sites_fasta:
+    """Collects all predicted att sites into a single FASTA for BLASTing."""
+    input:
+        expand("data/att_sites/{batch_id}/{genome}.tsv", 
+               batch_id=BATCHES, genome=GENOMES)
+    output:
+        "results/att_sites.fa"
+    script:
+        "scripts/aggregate_fasta.py"
+
 
 # ── Step 10: Identify genome-targeting candidates (BLAST to human) ────────
 
@@ -330,38 +372,11 @@ rule blast_att_to_human:
 
 rule compile_lsr_database:
     input:
+        # These are already aggregated files
         filtered="data/lsr_candidates_filtered.tsv",
         specificity="results/specificity_predictions.tsv",
         clusters_50="results/lsr_clusters_50pct.tsv",
-        genome_targeting="results/genome_targeting_candidates.tsv",
-        att_sites=expand("data/att_sites/{batch_id}/{genome}.tsv",
-                         batch_id=BATCHES, genome=GENOMES)
+        genome_targeting="results/genome_targeting_candidates.tsv"
     output:
         database="results/lsr_database.tsv",
-        att_fasta="results/att_sites.fa"
     script: "scripts/compile_database.py"
-
-rule validate_test_results:
-    input:
-        database="results/lsr_database.tsv",
-        test_csv=config["test_genome_csv"]
-    output:
-        report="results/test_validation_report.txt"
-    run:
-        import pandas as pd
-        expected = pd.read_csv(input.test_csv)
-        found    = pd.read_csv(input.database, sep="\t")
-
-        lines = []
-        for _, row in expected.iterrows():
-            acc  = row["accession"]
-            exp  = row["expected_lsr"]
-            hits = found[found["source_genome"] == acc]
-            detected = len(hits) > 0
-            status = "PASS" if (detected == exp or exp == "Unknown") else "FAIL"
-            lines.append(f"{status}\t{acc}\t{row['label']}\texpected={exp}\tdetected={detected}\thits={len(hits)}")
-
-        with open(output.report, "w") as f:
-            f.write("\n".join(lines) + "\n")
-        
-        print(open(output.report).read())
