@@ -1,4 +1,8 @@
-name: mgefinder
-channels: [bioconda, conda-forge]
+# depricated
+channels:
+  - mdurrant
+  - bioconda
+  - conda-forge
+  - defaults
 dependencies:
   - mgefinder=1.0.6

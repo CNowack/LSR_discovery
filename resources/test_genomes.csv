@@ -1,7 +1,7 @@
 accession,label,category,expected_lsr,notes
-GCF_000005845.2,E_coli_K12,negative_control,False,Model organism, no known LSRs
+GCF_000005845.2,E_coli_K12,negative_control,False,"Model organism, no known LSRs"
 GCF_000006765.1,P_aeruginosa_PAO1,negative_control,False,Common lab strain
-GCF_000195955.2,M_tuberculosis_H37Rv,negative_control,False,Well-characterized, no LSRs
+GCF_000195955.2,M_tuberculosis_H37Rv,negative_control,False,"Well-characterized, no LSRs"
 GCF_000026345.1,Listeria_phage_A118,positive_control,True,Encodes Listeria integrase (Bxb1-like)
 GCF_000857885.1,Mycobacterium_phage_Bxb1,positive_control,True,Canonical Bxb1 recombinase
 GCF_000857725.1,Streptomyces_phage_phiC31,positive_control,True,phiC31 integrase

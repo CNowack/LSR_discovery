@@ -150,7 +150,6 @@ rule compute_ani:
 rule mgefinder_wholegenome:
     """
     Compare LSR-containing genome to related genomes lacking the LSR.
-    Uses MGEfinder 'wholegenome' as described in the paper.
     """
     input:
         lsr_genome="data/genomes/{batch_id}/{genome}.fna",
@@ -159,14 +158,9 @@ rule mgefinder_wholegenome:
     output:
         boundaries="data/mgefinder/{batch_id}/{genome}/mge_boundaries.tsv",
         sequences="data/mgefinder/{batch_id}/{genome}/mge_sequences.fa"
-    conda: "envs/mgefinder.yaml"
-    shell:
-        """
-        mgefinder wholegenome \
-            {input.lsr_genome} \
-            --related-genomes {input.related_genomes} \
-            --outdir data/mgefinder/{wildcards.batch_id}/{wildcards.genome}
-        """
+    conda: "/projectnb/banskotalab/cnowack/envs/mgefinder"
+    script:
+        "scripts/run_mgefinder.py"
 
 
 # ── Step 5: Reconstruct attB and attP attachment sites ────────────────────

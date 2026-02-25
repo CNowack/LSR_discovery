@@ -27,7 +27,7 @@ max_dist_lsr_to_att_bp: 500
 blast_evalue: 1e-3
 human_genome: "resources/GRCh38.fa"
 
-threads: 8
+threads: 4
 
 # Use this mode during validation for testing a set list of genomes
 test_mode: true
