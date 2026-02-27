@@ -8,6 +8,7 @@ data/
 results/
 tmp_*/                  # MMseqs2 temp dirs (tmp_90pct/, tmp_50pct/, etc.)
 tmp_50pct/
+tmp_90pct/
 
 # ── Downloaded resources (re-downloadable) ───────────────────────────────────
 resources/GRCh38*.fa
