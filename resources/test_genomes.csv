@@ -2,9 +2,16 @@ accession,label,category,expected_lsr,notes
 GCF_000005845.2,E_coli_K12,negative_control,False,"Model organism, no known LSRs"
 GCF_000006765.1,P_aeruginosa_PAO1,negative_control,False,Common lab strain
 GCF_000195955.2,M_tuberculosis_H37Rv,negative_control,False,"Well-characterized, no LSRs"
-GCF_000026345.1,Listeria_phage_A118,positive_control,True,Encodes Listeria integrase (Bxb1-like)
-GCF_000857885.1,Mycobacterium_phage_Bxb1,positive_control,True,Canonical Bxb1 recombinase
+NZ_KI912183.1,Desulfotomaculum_nigrificans,positive_control,True,Novel Dn29 - contig
+GCF_000189755.2,Desulfotomaculum_nigrificans,positive_control,True,Novel Dn29 - full genome
+GCF_000857885.1,Mycobacterium_phage_Bxb1,positive_control,True,Canonical Bxb1 recombinase - viral genome
+GCF_000015005.1,Mycolicibacterium_smegmatis_MC2_155,positive_control,True,Bxb1 - bacterial genome
+NC_008596.1,Mycolicibacterium_smegmatis_MC2_155,positive_control,True,Bxb1 - bacterial contig (singular chromosome)
 GCF_000857725.1,Streptomyces_phage_phiC31,positive_control,True,phiC31 integrase
+GCF_000739105.1,Streptomyces_lividans_TK24,positive_control,True,phiC31 - bacterial genome
+NZ_CP009124.1,Streptomyces_lividans_TK24,positive_control,True,phiC31 - bacterial contig (singular chromosome)
+NZ_KK737600.1,Klebsiella pneumoniae,positive_control,True,Novel Kp01 - contig
+GCF_000694635.1,Klebsiella pneumoniae,positive_control,True,Novel Kp01 - full genome
 GCF_002220285.1,random_soil_1,random,Unknown,Random assembled metagenome
 GCF_003253775.1,random_soil_2,random,Unknown,Random assembled metagenome
 GCF_900638025.1,random_marine_1,random,Unknown,Marine metagenome assembly
