@@ -9,10 +9,12 @@ if config.get("test_mode"):
     GENOMES = _test_df["label"].tolist()  # MUST BE LABELS
     LABEL_TO_ACC = dict(zip(_test_df["label"], _test_df["accession"]))
     BATCHES = ["test_batch"]
+    BATCH = BATCHES[0]
 else:
     # In production, these will be handled by a checkpoint
     GENOMES  = []   
     BATCHES  = []
+    BATCH    = ""
 
 FINAL_OUTPUTS = [
     "results/lsr_database.tsv",
@@ -97,9 +99,9 @@ rule prodigal:
     conda: "envs/prodigal.yaml"
     shell:
         """
-        prodigal -i {input} \
-            -a {output.proteins} \
-            -f gff -o {output.gff} \
+        prodigal -i "{input}" \
+            -a "{output.proteins}" \
+            -f gff -o "{output.gff}" \
             -p meta -q
         """
 
@@ -141,9 +143,9 @@ rule compute_ani:
     conda: "envs/fastani.yaml"
     shell:
         """
-        fastANI -q {input.query} \
-            --rl {input.ref_list} \
-            -o {output} \
+        fastANI -q "{input.query}" \
+            --rl "{input.ref_list}" \
+            -o "{output}" \
             --minFraction 0.5
         """
 
@@ -196,10 +198,10 @@ rule quality_filter_lsrs:
     - LSR within 500nt of predicted att site
     """
     input:
-        att_sites=expand("data/att_sites/{batch_id}/{genome}.tsv",
-                         batch_id=BATCHES, genome=GENOMES),
-        hmmer_results=expand("data/hmmer/{batch_id}/{genome}.tblout",
-                             batch_id=BATCHES, genome=GENOMES)
+        # Match the paths actually created by mgefinder and hmmer rules
+        mge_data = expand("data/mgefinder/{batch}/{genome}/mge_boundaries.tsv", batch=BATCH, genome=GENOMES),
+        hmmer_data = expand("data/hmmer/{batch}/{genome}.tblout", batch=BATCH, genome=GENOMES),
+        att_data = expand("data/att_sites/{batch}/{genome}.tsv", batch=BATCH, genome=GENOMES)
     output:
         filtered="data/lsr_candidates_filtered.tsv",
         fasta="data/lsr_candidates.faa"
@@ -209,47 +211,52 @@ rule quality_filter_lsrs:
         max_att_center=config["att_center_max_bp"],
         max_mge_kb=config["max_mge_size_kb"],
         max_dist=config["max_dist_lsr_to_att_bp"]
-    script: "scripts/quality_filter_lsrs.py"
+    script:
+        "scripts/quality_filter_lsrs.py"
 
 
 # ── Step 7: Cluster LSRs ──────────────────────────────────────────────────
 
 rule cluster_lsrs_90pct:
-    input: "data/lsr_candidates.faa"
+    input:
+        "data/lsr_candidates.faa"
     output:
         clusters="results/lsr_clusters_90pct.tsv",
-        rep_seqs="results/lsr_reps_90pct.faa"
-    conda: "envs/mmseqs2.yaml"
-    threads: config["threads"]
+        reps="results/lsr_reps_90pct.faa"
+    conda:
+        "envs/mmseqs2.yaml"
     shell:
         """
-        mmseqs easy-cluster {input} \
-            results/lsr_90pct \
-            tmp_90pct \
-            --min-seq-id {config[cluster_identity_90]} \
-            --threads {threads} \
-            -c 0.8
-        mv results/lsr_90pct_cluster.tsv {output.clusters}
-        mv results/lsr_90pct_rep_seq.fasta {output.rep_seqs}
+        if [ -s {input} ]; then
+            mmseqs easy-cluster {input} results/lsr_90pct tmp_90pct \
+                --min-seq-id 0.9 --threads 4 -c 0.8
+            mv results/lsr_90pct_cluster.tsv {output.clusters}
+            mv results/lsr_90pct_rep_seq.fasta {output.reps}
+        else
+            touch {output.clusters}
+            touch {output.reps}
+        fi
         """
 
 rule cluster_lsrs_50pct:
-    input: "data/lsr_candidates.faa"
+    input:
+        "data/lsr_candidates.faa"
     output:
         clusters="results/lsr_clusters_50pct.tsv",
-        rep_seqs="results/lsr_reps_50pct.faa"
-    conda: "envs/mmseqs2.yaml"
-    threads: config["threads"]
+        reps="results/lsr_reps_50pct.faa"
+    conda:
+        "envs/mmseqs2.yaml"
     shell:
         """
-        mmseqs easy-cluster {input} \
-            results/lsr_50pct \
-            tmp_50pct \
-            --min-seq-id {config[cluster_identity_50]} \
-            --threads {threads} \
-            -c 0.8
-        mv results/lsr_50pct_cluster.tsv {output.clusters}
-        mv results/lsr_50pct_rep_seq.fasta {output.rep_seqs}
+        if [ -s {input} ]; then
+            mmseqs easy-cluster {input} results/lsr_50pct tmp_50pct \
+                --min-seq-id 0.5 --threads 4 -c 0.8
+            mv results/lsr_50pct_cluster.tsv {output.clusters}
+            mv results/lsr_50pct_rep_seq.fasta {output.reps}
+        else
+            touch {output.clusters}
+            touch {output.reps}
+        fi
         """
 
 
@@ -298,10 +305,10 @@ rule predict_specificity:
     Uses 90% clusters for multi-targeting, 50% for site-specific analysis.
     """
     input:
-        lsr_clusters_50="results/lsr_clusters_50pct.tsv",
+        lsr_clusters="results/lsr_clusters_50pct.tsv",
         lsr_clusters_90="results/lsr_clusters_90pct.tsv",
         target_clusters="results/target_gene_clusters.tsv",
-        filtered_lsrs="data/lsr_candidates_filtered.tsv"
+        filtered_candidates="data/lsr_candidates_filtered.tsv"
     output:
         specificity="results/specificity_predictions.tsv",
         site_specific="results/site_specific_lsrs.tsv",
@@ -344,21 +351,21 @@ rule blast_att_to_human:
     shell:
         """
         # Make BLAST db if needed
-        makeblastdb -in {input.human_genome} -dbtype nucl \
+        makeblastdb -in "{input.human_genome}" -dbtype nucl \
             -out resources/GRCh38_db
 
-        blastn -query {input.att_sites} \
+        blastn -query "{input.att_sites}" \
             -db resources/GRCh38_db \
-            -out {output.blast_hits} \
+            -out "{output.blast_hits}" \
             -evalue {params.evalue} \
             -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore" \
             -num_threads {threads}
 
         # Filter and annotate attA/attD/attH designations
         python scripts/annotate_genome_targets.py \
-            --blast {output.blast_hits} \
-            --att-sites {input.att_sites} \
-            --out {output.genome_targeting}
+            --blast "{output.blast_hits}" \
+            --att-sites "{input.att_sites}" \
+            --out "{output.genome_targeting}"
         """
 
 
