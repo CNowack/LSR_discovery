@@ -15,6 +15,7 @@ resources/GRCh38*.fa
 resources/GRCh38*.fai
 resources/GRCh38_db*
 resources/assembly_summary.txt
+resources/test*.csv
 
 # Keep the HMM profile — it's small and pipeline-critical
 !resources/PF07508.hmm

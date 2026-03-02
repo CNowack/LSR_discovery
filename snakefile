@@ -6,8 +6,10 @@ import pandas as pd
 
 if config.get("test_mode"):
     _test_df = pd.read_csv(config["test_genome_csv"])
-    GENOMES = _test_df["label"].tolist()  # MUST BE LABELS
-    LABEL_TO_ACC = dict(zip(_test_df["label"], _test_df["accession"]))
+    # Create unique identifier, combine genome and accesion ID
+    _test_df["unique_label"] = _test_df["label"] + "_" + _test_df["accession"].astype(str)
+    GENOMES = _test_df["unique_label"].tolist()  # MUST BE LABELS
+    LABEL_TO_ACC = dict(zip(_test_df["unique_label"], _test_df["accession"]))
     BATCHES = ["test_batch"]
     BATCH = BATCHES[0]
 else:
@@ -397,7 +399,8 @@ rule validate_test_results:
         for _, row in expected.iterrows():
             acc  = row["accession"]
             exp  = row["expected_lsr"]
-            hits = found[found["source_genome"] == acc]
+            unique_label = f"{row['label']}_{acc}"
+            hits = found[found["source_genome"] == unique_label]
             detected = len(hits) > 0
             status = "PASS" if (detected == exp or exp == "Unknown") else "FAIL"
             lines.append(f"{status}\t{acc}\t{row['label']}\texpected={exp}\tdetected={detected}\thits={len(hits)}")
