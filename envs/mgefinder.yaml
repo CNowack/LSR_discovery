@@ -1,8 +1,11 @@
-# depricated
+name: mgefinder_env
 channels:
-  - mdurrant
   - bioconda
   - conda-forge
   - defaults
 dependencies:
-  - mgefinder=1.0.6
+  - python=3.8
+  - mgefinder
+  - bwa          # Required for alignment
+  - samtools     # Required for BAM processingy
+  - pandas

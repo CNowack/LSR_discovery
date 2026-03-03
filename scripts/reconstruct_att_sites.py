@@ -12,6 +12,11 @@ import os
 import sys
 import pandas as pd
 
+# Creates empty file for negative control genomes that lack MGEs
+# Dropped from pipeline during filter step
+with open(snakemake.output.att_sites, 'w') as f:
+    pass # Optional: write your column headers here if downstream scripts require them
+
 # 1. Grab inputs/outputs
 boundaries_file = snakemake.input.boundaries
 out_file = snakemake.output.att_sites

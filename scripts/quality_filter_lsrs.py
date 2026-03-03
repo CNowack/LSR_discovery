@@ -7,7 +7,7 @@ def main():
     mge_files = snakemake.input.mge_data
     hmmer_files = snakemake.input.hmmer_data
     att_files = snakemake.input.att_data
-    ani_data = snakemake.input.ani_data
+    #ani_data = snakemake.input.ani_data
     
     out_tsv = snakemake.output.filtered
     out_faa = snakemake.output.fasta
