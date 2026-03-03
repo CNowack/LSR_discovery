@@ -1,53 +1,107 @@
-"""
-Core logic for reconstructing attB and attP from MGE boundaries.
-
-Given post-integration structure:
-    B1 - D - P1 - [MGE with LSR] - P2 - D - B2
-
-attB = B1 + D + B2   (50bp window around center)
-attP = P2 + D + P1   (50bp window around center)
-"""
-
 import os
-import sys
 import pandas as pd
 
-# Creates empty file for negative control genomes that lack MGEs
-# Dropped from pipeline during filter step
-with open(snakemake.output.att_sites, 'w') as f:
-    pass # Optional: write your column headers here if downstream scripts require them
+def load_fasta(fasta_path):
+    """Simple FASTA parser to load the genome into a dictionary."""
+    seqs = {}
+    with open(fasta_path, 'r') as f:
+        header = None
+        seq = []
+        for line in f:
+            line = line.strip()
+            if line.startswith(">"):
+                if header:
+                    seqs[header] = "".join(seq)
+                # Store only the primary ID (everything before the first space)
+                header = line[1:].split()[0]
+                seq = []
+            else:
+                seq.append(line)
+        if header:
+            seqs[header] = "".join(seq)
+    return seqs
 
-# 1. Grab inputs/outputs
-boundaries_file = snakemake.input.boundaries
-out_file = snakemake.output.att_sites
+def main():
+    # 1. Access inputs and outputs from Snakemake
+    boundary_file = snakemake.input[0]  # mge_boundaries.tsv
+    genome_file = snakemake.input[1]    # .fna assembly
+    out_file = snakemake.output.att_sites
+    
+    # Define how many base pairs to extract on either side of the insertion
+    flank_size = 50 
 
-# 2. Check if the boundaries file is empty or only contains a header
-try:
-    df = pd.read_csv(boundaries_file, sep='\t')
-    is_empty = df.empty
-except pd.errors.EmptyDataError:
-    is_empty = True
-
-# 3. If no insertions were found, write an empty file and exit safely
-if is_empty:
+    # 2. FAILSAFE: Initialize the output file immediately
+    # This prevents Snakemake MissingOutputExceptions if no MGEs were found
     with open(out_file, 'w') as f:
-        # Write the headers your downstream scripts expect
-        f.write("genome\tsite_type\tsequence\n")
-    sys.exit(0)
+        f.write("sample\tpair_id\tcontig\tattL_start\tattL_end\tattL_seq\tattR_start\tattR_end\tattR_seq\n")
 
-def reconstruct_att_sites(boundary_record):
-    b1 = boundary_record["left_flank"]
-    b2 = boundary_record["right_flank"]
-    d  = boundary_record["target_site_duplication"]
-    p1 = boundary_record["left_mge_terminal"]
-    p2 = boundary_record["right_mge_terminal"]
+    # 3. Check if boundary file exists and contains data
+    if not os.path.exists(boundary_file):
+        return
 
-    attB_full = b1 + d + b2
-    attP_full = p2 + d + p1
+    try:
+        df = pd.read_csv(boundary_file, sep='\t')
+        if df.empty or 'loc' not in df.columns:
+            return
+    except Exception:
+        return
 
-    # Extract 50bp around the center (dinucleotide core)
-    center = len(attB_full) // 2
-    attB = attB_full[center-25 : center+25]
-    attP = attP_full[center-25 : center+25]
+    # 4. Load the full genome sequence into memory
+    genome_seqs = load_fasta(genome_file)
 
-    return attB, attP
+    results = []
+    
+    # 5. Parse coordinates and extract flanking DNA
+    for _, row in df.iterrows():
+        loc = str(row['loc'])
+        
+        # Ensure the string matches the expected CONTIG:START-END format
+        if ":" not in loc or "-" not in loc:
+            continue
+
+        # Split the string to isolate the variables
+        contig = loc.split(":")[0]
+        coords = loc.split(":")[1]
+        
+        try:
+            start = int(coords.split("-")[0])
+            end = int(coords.split("-")[1])
+        except ValueError:
+            continue
+
+        # Handle potential mismatch in NCBI FASTA headers vs MGEfinder contig tracking
+        if contig not in genome_seqs:
+            matched_contig = next((k for k in genome_seqs.keys() if k.startswith(contig)), None)
+            if not matched_contig:
+                continue
+            contig = matched_contig
+
+        seq = genome_seqs[contig]
+
+        # Extract attL (DNA immediately upstream of the START coordinate)
+        attL_start = max(0, start - flank_size)
+        attL_seq = seq[attL_start:start]
+
+        # Extract attR (DNA immediately downstream of the END coordinate)
+        attR_end = min(len(seq), end + flank_size)
+        attR_seq = seq[end:attR_end]
+
+        results.append({
+            'sample': row['sample'],
+            'pair_id': row['pair_id'],
+            'contig': contig,
+            'attL_start': attL_start,
+            'attL_end': start,
+            'attL_seq': attL_seq,
+            'attR_start': end,
+            'attR_end': attR_end,
+            'attR_seq': attR_seq
+        })
+
+    # 6. Write the successfully extracted attachment sites to the final TSV
+    if results:
+        res_df = pd.DataFrame(results)
+        res_df.to_csv(out_file, sep='\t', index=False)
+
+if __name__ == "__main__":
+    main()

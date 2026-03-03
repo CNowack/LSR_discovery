@@ -2,94 +2,93 @@ import os
 import pandas as pd
 
 def main():
-    # 1. Access named inputs/outputs/params from the Snakemake object
-    # These are lists because of the 'expand' function in the Snakefile
+    # 1. Access inputs/outputs/params
     mge_files = snakemake.input.mge_data
     hmmer_files = snakemake.input.hmmer_data
     att_files = snakemake.input.att_data
-    #ani_data = snakemake.input.ani_data
     
     out_tsv = snakemake.output.filtered
-    out_faa = snakemake.output.fasta
+    out_fasta = snakemake.output.fasta
 
-    # 2. Get thresholds from Snakemake params (passed from config.yaml)
-    MIN_LSR_LEN = snakemake.params.min_len
-    MAX_LSR_LEN = snakemake.params.max_len
-    MAX_DIST_TO_ATT = snakemake.params.max_dist
     MAX_MGE_SIZE = snakemake.params.max_mge_kb * 1000
 
     filtered_candidates = []
-    
-    print("\n--- STARTING QC DEBUG LOG ---")
 
-    # 3. Create a map to pair the expanded file lists by Genome ID
-    # We use the filename to ensure we are comparing the right data for the right genome
+    # 2. Map files to their respective genomes
     genome_map = {}
     for f in mge_files:
-        gid = f.split('/')[-2] # Extract {genome} from .../{genome}/mge_boundaries.tsv
+        gid = f.split('/')[-2]
         genome_map.setdefault(gid, {})['mge'] = f
     
     for f in hmmer_files:
         gid = os.path.basename(f).replace('.tblout', '')
         genome_map.setdefault(gid, {})['hmmer'] = f
 
-    # 4. Process each genome
+    for f in att_files:
+        gid = os.path.basename(f).replace('.tsv', '')
+        genome_map.setdefault(gid, {})['att'] = f
+
+    # 3. Process each genome
     for genome_id, files in genome_map.items():
         mge_path = files.get('mge')
         hmmer_path = files.get('hmmer')
+        att_path = files.get('att')
         
-        if not mge_path or not hmmer_path or not os.path.exists(mge_path) or not os.path.exists(hmmer_path):
+        if not all([mge_path, hmmer_path, att_path]) or not all(os.path.exists(p) for p in [mge_path, hmmer_path, att_path]):
             continue
             
         try:
+            # Load MGE and ATT files
             df_mge = pd.read_csv(mge_path, sep='\t')
-            # HMMER tblout parsing (ignoring headers)
-            df_hmmer = pd.read_csv(hmmer_path, sep='\t', comment='#', header=None, delim_whitespace=True)
+            df_att = pd.read_csv(att_path, sep='\t')
+            
+            # Load HMMER file using regex whitespace separator
+            df_hmmer = pd.read_csv(hmmer_path, sep=r'\s+', comment='#', header=None)
         except Exception:
             continue
 
-        if df_hmmer.empty or df_mge.empty:
+        if df_hmmer.empty or df_mge.empty or df_att.empty:
             continue
 
-        print(f"Evaluating: {genome_id}")
-
+        # 4. Filter and Merge Data
         for _, mge_row in df_mge.iterrows():
-            mge_start, mge_end = mge_row['start'], mge_row['end']
-            mge_size = abs(mge_end - mge_start)
-
-            if mge_size > MAX_MGE_SIZE:
-                print(f"  [REJECTED] MGE size {mge_size} > {MAX_MGE_SIZE}")
+            # Extract MGE size safely
+            mge_size = mge_row.get('inferred_seq_length', 0)
+            if pd.isna(mge_size) or mge_size > MAX_MGE_SIZE:
                 continue
+            
+            pair_id = mge_row.get('pair_id')
+            
+            # Fetch corresponding attachment sites
+            att_match = df_att[df_att['pair_id'] == pair_id]
+            attL_seq = att_match['attL_seq'].values[0] if not att_match.empty else "NOT_FOUND"
+            attR_seq = att_match['attR_seq'].values[0] if not att_match.empty else "NOT_FOUND"
 
+            # Cross-reference with HMMER hits
             for _, hmm_hit in df_hmmer.iterrows():
-                protein_id = hmm_hit[0]
-                # Note: In the full pipeline, coordinates are pulled from the GFF
-                # For this debug logic, we verify the HMMER hit exists
+                protein_id = hmm_hit[0] # The PROKKA or NCBI protein ID
                 
-                # Mock length check for demonstration (replace with actual logic if available)
-                prot_len = 500 
-                
-                if not (MIN_LSR_LEN <= prot_len <= MAX_LSR_LEN):
-                    print(f"  [REJECTED] {protein_id}: Length {prot_len} aa")
-                    continue
-
-                print(f"  [PASSED] {protein_id}")
                 filtered_candidates.append({
                     'source_genome': genome_id,
                     'lsr_id': protein_id,
-                    'mge_size': mge_size
+                    'pair_id': pair_id,
+                    'mge_size': mge_size,
+                    'attL_seq': attL_seq,
+                    'attR_seq': attR_seq
                 })
 
     # 5. Write outputs
     df_out = pd.DataFrame(filtered_candidates)
-    df_out.to_csv(out_tsv, sep='\t', index=False)
     
-    with open(out_faa, 'w') as f:
-        if not df_out.empty:
+    if not df_out.empty:
+        df_out.to_csv(out_tsv, sep='\t', index=False)
+        with open(out_fasta, 'w') as f:
             for _, row in df_out.iterrows():
                 f.write(f">{row['lsr_id']}\nSEQUENCE_PLACEHOLDER\n")
-
-    print("--- QC COMPLETE ---\n")
+    else:
+        # Failsafe for empty output
+        pd.DataFrame(columns=['source_genome', 'lsr_id', 'pair_id', 'mge_size', 'attL_seq', 'attR_seq']).to_csv(out_tsv, sep='\t', index=False)
+        open(out_fasta, 'w').close()
 
 if __name__ == "__main__":
     main()
