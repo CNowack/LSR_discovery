@@ -1,96 +1,83 @@
-import os
 import pandas as pd
+import os
+import re
 
 def main():
-    filtered_file = snakemake.input.filtered
-    spec_file = snakemake.input.specificity
-    clust_file = snakemake.input.clusters_50
-    gt_file = snakemake.input.genome_targeting
-    out_db = snakemake.output.database
+    mge_metadata_path = snakemake.input[0]
+    specificity_path = snakemake.input[1]
+    clusters_path = snakemake.input[2]
+    targeting_path = snakemake.input[3]
+    output_path = snakemake.output[0]
 
-    # Define the final schema for the database
-    final_cols = [
-        "lsr_id", "source_genome", "genome_label", "contig", "lsr_start", "lsr_end", 
-        "distance_to_att", "mge_size", "cluster_50", "specificity",
-        "attA_id", "human_chr", "human_start", "human_end", "pident"
-    ]
+    def safe_read(path, is_clust=False):
+        if not (os.path.exists(path) and os.path.getsize(path) > 0):
+            return pd.DataFrame()
+        
+        df = pd.read_csv(path, sep='\t')
+        
+        if is_clust and not df.empty:
+            first_col = str(df.columns[0])
+            if re.search(r'[_.]', first_col) and not any(h in first_col.lower() for h in ['id', 'cluster', 'member']):
+                df = pd.read_csv(path, sep='\t', header=None, names=['cluster', 'lsr_id'])
+        return df
 
-    # 1. Load Filtered LSR Candidates
-    try:
-        df_lsr = pd.read_csv(filtered_file, sep='\t')
-    except pd.errors.EmptyDataError:
-        df_lsr = pd.DataFrame()
+    df_merged = safe_read(mge_metadata_path)
+    df_spec = safe_read(specificity_path)
+    df_clust = safe_read(clusters_path, is_clust=True)
+    df_target = safe_read(targeting_path)
 
-    # Failsafe: If no candidates survived filtering, write an empty DB and exit
-    if df_lsr.empty:
-        pd.DataFrame(columns=final_cols).to_csv(out_db, sep='\t', index=False)
+    if df_merged.empty:
+        pd.DataFrame().to_csv(output_path, sep='\t', index=False)
         return
 
-    # Standardize the genome column for merging
-    df_lsr = df_lsr.rename(columns={"genome": "genome_label"})
+    # Merge Clustering Results
+    if not df_clust.empty:
+        potential_id_cols = ['lsr_id', 'member', 'id', 'query', 'representative', 'accession', 'sequence_id']
+        id_col = next((c for c in potential_id_cols if c in df_clust.columns), None)
+        if id_col is None:
+            id_col = df_clust.columns[0]
+        
+        if id_col in df_clust.columns:
+            if df_clust[id_col].astype(str).str.contains('_').any() and 'lsr_id' not in df_clust.columns:
+                df_clust['lsr_id'] = df_clust[id_col].apply(lambda x: str(x).rsplit('_', 1)[0])
+                merge_key = 'lsr_id'
+            else:
+                merge_key = id_col
+            df_merged = pd.merge(df_merged, df_clust, left_on='lsr_id', right_on=merge_key, how='left', suffixes=('', '_clust'))
 
-    # Map the labels back to accessions for the validation script
-    test_csv = "resources/test_genomes.csv"
-    label_to_acc = {}
-    if os.path.exists(test_csv):
-        try:
-            df_test = pd.read_csv(test_csv)
-            if 'label' in df_test.columns and 'accession' in df_test.columns:
-                label_to_acc = dict(zip(df_test['label'], df_test['accession']))
-        except Exception:
-            pass
+    # Merge Specificity & Targeting
+    if not df_spec.empty:
+        spec_key = next((c for c in ['lsr_id', 'id', 'query'] if c in df_spec.columns), df_spec.columns[0])
+        df_merged = pd.merge(df_merged, df_spec, left_on='lsr_id', right_on=spec_key, how='left', suffixes=('', '_spec'))
+
+    if not df_target.empty:
+        target_key = next((c for c in ['lsr_id', 'id', 'query'] if c in df_target.columns), df_target.columns[0])
+        df_merged = pd.merge(df_merged, df_target, left_on='lsr_id', right_on=target_key, how='left', suffixes=('', '_target'))
+
+    # Cleanup and Output
+    cols_priority = [
+        'source_genome', 'lsr_id', 'pair_id', 'cluster', 'cluster_id',
+        'predicted_specificity', 'mge_size', 'core_homology', 'lsr_dna_seq', 
+        'attL_seq', 'attR_seq'
+    ]
     
-    df_lsr['source_genome'] = df_lsr['genome_label'].map(lambda x: label_to_acc.get(x, x))
+    if 'cluster' not in df_merged.columns:
+        for c in ['cluster_id', 'rep', 'representative']:
+            if c in df_merged.columns:
+                df_merged = df_merged.rename(columns={c: 'cluster'})
+                break
 
-    # 2. Merge Specificity Predictions
-    try:
-        df_spec = pd.read_csv(spec_file, sep='\t')
-        if not df_spec.empty and 'lsr_id' in df_spec.columns:
-            df_lsr = pd.merge(df_lsr, df_spec[['lsr_id', 'specificity']], on='lsr_id', how='left')
-        else:
-            df_lsr['specificity'] = "Unknown"
-    except (pd.errors.EmptyDataError, FileNotFoundError):
-        df_lsr['specificity'] = "Unknown"
-
-    # 3. Merge MMseqs2 Clusters
-    try:
-        # MMseqs2 TSV format is typically headerless: [cluster_rep, member]
-        df_clust = pd.read_csv(clust_file, sep='\t', header=None, names=['cluster_50', 'lsr_id'])
-        if not df_clust.empty:
-            df_lsr = pd.merge(df_lsr, df_clust, on='lsr_id', how='left')
-        else:
-            df_lsr['cluster_50'] = df_lsr['lsr_id']
-    except (pd.errors.EmptyDataError, FileNotFoundError):
-        df_lsr['cluster_50'] = df_lsr['lsr_id']
-
-    # 4. Merge Genome Targeting (BLAST) Hits
-    try:
-        df_gt = pd.read_csv(gt_file, sep='\t')
-        if not df_gt.empty:
-            df_gt = df_gt.rename(columns={"genome": "genome_label"})
-            
-            # Left join on genome_label. If a genome has multiple human targets,
-            # this will safely duplicate the LSR row to capture each targeting event.
-            merge_cols = ['genome_label', 'attA_id', 'human_chr', 'human_start', 'human_end', 'pident']
-            existing_gt_cols = [c for c in merge_cols if c in df_gt.columns]
-            
-            df_lsr = pd.merge(df_lsr, df_gt[existing_gt_cols], on='genome_label', how='left')
-        else:
-            for c in ['attA_id', 'human_chr', 'human_start', 'human_end', 'pident']:
-                df_lsr[c] = None
-    except (pd.errors.EmptyDataError, FileNotFoundError):
-        for c in ['attA_id', 'human_chr', 'human_start', 'human_end', 'pident']:
-            df_lsr[c] = None
-
-    # Ensure schema enforcement and handle missing values
-    for col in final_cols:
-        if col not in df_lsr.columns:
-            df_lsr[col] = None
-
-    df_lsr = df_lsr[final_cols]
+    existing_cols = [c for c in cols_priority if c in df_merged.columns]
+    other_cols = [c for c in df_merged.columns if c not in existing_cols]
     
-    # Write the compiled database
-    df_lsr.to_csv(out_db, sep='\t', index=False)
+    final_cols = []
+    seen = set()
+    for c in (existing_cols + other_cols):
+        if c not in seen and not any(c.endswith(s) for s in ['_clust', '_spec', '_target']):
+            final_cols.append(c)
+            seen.add(c)
+
+    df_merged[final_cols].to_csv(output_path, sep='\t', index=False)
 
 if __name__ == "__main__":
     main()

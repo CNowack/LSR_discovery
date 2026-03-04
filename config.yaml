@@ -9,6 +9,8 @@ hmmer_evalue: 1e-5
 
 # MGEfinder settings
 min_ani: 0.95  # 95% ANI cutoff for same-species comparison (FastANI)
+max_mge_size_kb: 500
+min_mge_size_bp: 30
 
 # Clustering thresholds
 cluster_identity_90: 0.90
@@ -20,8 +22,12 @@ lsr_max_length_aa: 650
 att_center_max_bp: 20
 max_ambiguous_nt_pct: 0.05
 max_ambiguous_aa_pct: 0.05
-max_mge_size_kb: 200
-max_dist_lsr_to_att_bp: 500
+max_dist_lsr_to_att_bp: 500 # these last two might be redundant now
+max_lsr_distance_bp: 10000
+
+# More downstream filters, need to figure out what step to implement these in
+min_core_bp: 2
+max_core_bp: 4
 
 # BLAST for genome-targeting LSRs
 blast_evalue: 1e-3

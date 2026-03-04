@@ -205,7 +205,7 @@ rule quality_filter_lsrs:
         hmmer_data = expand("data/hmmer/{batch}/{genome}.tblout", batch=BATCH, genome=GENOMES),
         att_data = expand("data/att_sites/{batch}/{genome}.tsv", batch=BATCH, genome=GENOMES)
     output:
-        filtered="data/lsr_candidates_filtered.tsv",
+        filtered="data/mge_metadata.tsv",
         fasta="data/lsr_candidates.faa"
     params:
         min_len=config["lsr_min_length_aa"],
@@ -293,7 +293,7 @@ rule build_phylogeny:
 
 rule cluster_target_genes:
     """Cluster genes disrupted by MGE insertion at 50% identity."""
-    input: "data/lsr_candidates_filtered.tsv"
+    input: "data/mge_metadata.tsv"
     output: "results/target_gene_clusters.tsv"
     conda: "envs/mmseqs2.yaml"
     threads: config["threads"]
@@ -310,7 +310,7 @@ rule predict_specificity:
         lsr_clusters="results/lsr_clusters_50pct.tsv",
         lsr_clusters_90="results/lsr_clusters_90pct.tsv",
         target_clusters="results/target_gene_clusters.tsv",
-        filtered_candidates="data/lsr_candidates_filtered.tsv"
+        filtered_candidates="data/mge_metadata.tsv"
     output:
         specificity="results/specificity_predictions.tsv",
         site_specific="results/site_specific_lsrs.tsv",
@@ -376,7 +376,7 @@ rule blast_att_to_human:
 rule compile_lsr_database:
     input:
         # These are already aggregated files
-        filtered="data/lsr_candidates_filtered.tsv",
+        filtered="data/mge_metadata.tsv",
         specificity="results/specificity_predictions.tsv",
         clusters_50="results/lsr_clusters_50pct.tsv",
         genome_targeting="results/genome_targeting_candidates.tsv"

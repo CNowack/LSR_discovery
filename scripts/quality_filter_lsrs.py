@@ -1,8 +1,61 @@
 import os
 import pandas as pd
 
+def reverse_complement(seq):
+    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N',
+                  'a': 't', 'c': 'g', 'g': 'c', 't': 'a', 'n': 'n'}
+    return "".join(complement.get(base, base) for base in reversed(seq))
+
+def load_fasta(fasta_path):
+    seqs = {}
+    if not os.path.exists(fasta_path):
+        return seqs
+    with open(fasta_path, 'r') as f:
+        header = None
+        seq = []
+        for line in f:
+            line = line.strip()
+            if line.startswith(">"):
+                if header:
+                    seqs[header] = "".join(seq)
+                header = line[1:].split()[0]
+                seq = []
+            else:
+                seq.append(line)
+        if header:
+            seqs[header] = "".join(seq)
+    return seqs
+
+def get_core_homology(attL, attR, min_bp, max_bp):
+    if attL == "NOT_FOUND" or attR == "NOT_FOUND":
+        return None
+    end_L = str(attL)[-10:]
+    start_R = str(attR)[:10]
+    for length in range(max_bp, min_bp - 1, -1):
+        for i in range(len(end_L) - length + 1):
+            kmer = end_L[i:i+length]
+            if kmer in start_R:
+                return kmer
+    return None
+
+def parse_prodigal_coords(faa_path):
+    coords = {}
+    if not os.path.exists(faa_path):
+        return coords
+    with open(faa_path, 'r') as f:
+        for line in f:
+            if line.startswith(">"):
+                parts = line.strip().split(' # ')
+                if len(parts) >= 4:
+                    prot_id = parts[0][1:].split()[0]
+                    start = int(parts[1])
+                    end = int(parts[2])
+                    strand = int(parts[3])
+                    contig = prot_id.rsplit('_', 1)[0]
+                    coords[prot_id] = {'contig': contig, 'start': start, 'end': end, 'strand': strand}
+    return coords
+
 def main():
-    # 1. Access inputs/outputs/params
     mge_files = snakemake.input.mge_data
     hmmer_files = snakemake.input.hmmer_data
     att_files = snakemake.input.att_data
@@ -10,11 +63,14 @@ def main():
     out_tsv = snakemake.output.filtered
     out_fasta = snakemake.output.fasta
 
-    MAX_MGE_SIZE = snakemake.params.max_mge_kb * 1000
+    MAX_MGE_SIZE = snakemake.params.get("max_mge_size_kb", 500) * 1000
+    MIN_MGE_SIZE = snakemake.params.get("min_mge_size_bp", 30)
+    MAX_LSR_DIST = snakemake.params.get("max_lsr_distance_bp", 10000)
+    MIN_CORE = snakemake.params.get("min_core_bp", 2)
+    MAX_CORE = snakemake.params.get("max_core_bp", 4)
 
     filtered_candidates = []
 
-    # 2. Map files to their respective genomes
     genome_map = {}
     for f in mge_files:
         gid = f.split('/')[-2]
@@ -23,26 +79,24 @@ def main():
     for f in hmmer_files:
         gid = os.path.basename(f).replace('.tblout', '')
         genome_map.setdefault(gid, {})['hmmer'] = f
+        genome_map[gid]['faa'] = f.replace('hmmer', 'annotations').replace('.tblout', '.faa')
 
     for f in att_files:
         gid = os.path.basename(f).replace('.tsv', '')
         genome_map.setdefault(gid, {})['att'] = f
 
-    # 3. Process each genome
     for genome_id, files in genome_map.items():
         mge_path = files.get('mge')
         hmmer_path = files.get('hmmer')
         att_path = files.get('att')
+        faa_path = files.get('faa')
         
         if not all([mge_path, hmmer_path, att_path]) or not all(os.path.exists(p) for p in [mge_path, hmmer_path, att_path]):
             continue
             
         try:
-            # Load MGE and ATT files
             df_mge = pd.read_csv(mge_path, sep='\t')
             df_att = pd.read_csv(att_path, sep='\t')
-            
-            # Load HMMER file using regex whitespace separator
             df_hmmer = pd.read_csv(hmmer_path, sep=r'\s+', comment='#', header=None)
         except Exception:
             continue
@@ -50,44 +104,98 @@ def main():
         if df_hmmer.empty or df_mge.empty or df_att.empty:
             continue
 
-        # 4. Filter and Merge Data
+        if 'method' in df_mge.columns:
+            df_mge = df_mge.sort_values(by='method')
+        df_mge = df_mge.drop_duplicates(subset=['pair_id'], keep='first')
+
+        prot_coords = parse_prodigal_coords(faa_path)
+        
+        # Load the genome FASTA for this isolate to extract the LSR sequence
+        genome_fasta_path = f"data/genomes/{genome_id}.fna"
+        genome_seqs = load_fasta(genome_fasta_path)
+
         for _, mge_row in df_mge.iterrows():
-            # Extract MGE size safely
             mge_size = mge_row.get('inferred_seq_length', 0)
-            if pd.isna(mge_size) or mge_size > MAX_MGE_SIZE:
+            
+            if pd.isna(mge_size) or not (MIN_MGE_SIZE <= mge_size <= MAX_MGE_SIZE):
                 continue
             
             pair_id = mge_row.get('pair_id')
+            mge_loc = str(mge_row.get('loc'))
             
-            # Fetch corresponding attachment sites
+            try:
+                mge_contig = mge_loc.split(":")[0]
+                mge_start = int(mge_loc.split(":")[1].split("-")[0])
+                mge_end = int(mge_loc.split(":")[1].split("-")[1])
+            except (IndexError, ValueError):
+                continue
+            
             att_match = df_att[df_att['pair_id'] == pair_id]
             attL_seq = att_match['attL_seq'].values[0] if not att_match.empty else "NOT_FOUND"
             attR_seq = att_match['attR_seq'].values[0] if not att_match.empty else "NOT_FOUND"
 
-            # Cross-reference with HMMER hits
+            core_seq = get_core_homology(attL_seq, attR_seq, MIN_CORE, MAX_CORE)
+            if not core_seq:
+                continue 
+
+            valid_lsr_found = False
+            associated_lsr = None
+
             for _, hmm_hit in df_hmmer.iterrows():
-                protein_id = hmm_hit[0] # The PROKKA or NCBI protein ID
+                protein_id = hmm_hit[0]
+                if protein_id not in prot_coords:
+                    continue
                 
+                p_data = prot_coords[protein_id]
+                if p_data['contig'] != mge_contig:
+                    continue
+                
+                if p_data['end'] >= mge_start and p_data['start'] <= mge_end:
+                    dist = 0
+                else:
+                    dist = min(abs(mge_start - p_data['end']), abs(p_data['start'] - mge_end))
+                
+                if dist <= MAX_LSR_DIST:
+                    valid_lsr_found = True
+                    associated_lsr = protein_id
+                    break 
+
+            if valid_lsr_found:
+                # Extract the DNA sequence directly from the whole genome
+                lsr_dna_seq = "NOT_FOUND"
+                p_data = prot_coords[associated_lsr]
+                
+                matched_contig = p_data['contig']
+                if matched_contig not in genome_seqs:
+                    matched_contig = next((k for k in genome_seqs.keys() if k.startswith(p_data['contig'])), None)
+                    
+                if matched_contig and matched_contig in genome_seqs:
+                    seq_slice = genome_seqs[matched_contig][p_data['start']-1 : p_data['end']]
+                    if p_data['strand'] == -1:
+                        seq_slice = reverse_complement(seq_slice)
+                    lsr_dna_seq = seq_slice
+
                 filtered_candidates.append({
                     'source_genome': genome_id,
-                    'lsr_id': protein_id,
+                    'lsr_id': associated_lsr,
                     'pair_id': pair_id,
                     'mge_size': mge_size,
+                    'core_homology': core_seq,
+                    'lsr_dna_seq': lsr_dna_seq,
                     'attL_seq': attL_seq,
                     'attR_seq': attR_seq
                 })
 
-    # 5. Write outputs
     df_out = pd.DataFrame(filtered_candidates)
     
     if not df_out.empty:
+        df_out = df_out.drop_duplicates()
         df_out.to_csv(out_tsv, sep='\t', index=False)
         with open(out_fasta, 'w') as f:
             for _, row in df_out.iterrows():
-                f.write(f">{row['lsr_id']}\nSEQUENCE_PLACEHOLDER\n")
+                f.write(f">{row['lsr_id']}_{row['pair_id']}\nSEQUENCE_PLACEHOLDER\n")
     else:
-        # Failsafe for empty output
-        pd.DataFrame(columns=['source_genome', 'lsr_id', 'pair_id', 'mge_size', 'attL_seq', 'attR_seq']).to_csv(out_tsv, sep='\t', index=False)
+        pd.DataFrame(columns=['source_genome', 'lsr_id', 'pair_id', 'mge_size', 'core_homology', 'lsr_dna_seq', 'attL_seq', 'attR_seq']).to_csv(out_tsv, sep='\t', index=False)
         open(out_fasta, 'w').close()
 
 if __name__ == "__main__":
