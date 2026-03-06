@@ -19,6 +19,7 @@ resources/test*.csv
 
 # Keep the HMM profile — it's small and pipeline-critical
 !resources/PF07508.hmm
+!resources/Dn29.csv
 
 # ── Conda environments (built locally) ───────────────────────────────────────
 .conda/
