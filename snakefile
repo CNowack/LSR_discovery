@@ -1,6 +1,31 @@
+# --- Packages ---
+import pandas as pd
+
+# --- Configuration Parsing ---
 configfile: "config.yaml"
 
-import pandas as pd
+# Dynamically handle the test argument from --config test=path/to/csv
+if "test" in config:
+    test_path = config["test"]
+    if not os.path.exists(test_path):
+        raise ValueError(f"\n[ERROR] Test CSV file not found: {test_path}\nPlease check the filename and path.")
+        
+    config["test_mode"] = True
+    config["test_genome_csv"] = test_path
+    print(f"\n--- RUNNING IN TEST MODE ---")
+    print(f"Using genome list: {config['test_genome_csv']}\n")
+else:
+    config.setdefault("test_mode", False)
+
+# Example of how you are likely loading genomes (Line 20 area)
+if config["test_mode"]:
+    # Using the hardcoded 'accession' column from your new CSV structure
+    samples_df = pd.read_csv(config["test_genome_csv"])
+    GENOMES = samples_df["accession"].tolist()
+else:
+    # Standard mode logic
+    GENOMES = config.get("genomes", [])
+# -----------------------------
 
 # ── Test mode: load genomes from CSV instead of querying RefSeq ──────────────
 
@@ -384,28 +409,16 @@ rule compile_lsr_database:
         database="results/lsr_database.tsv",
     script: "scripts/compile_database.py"
 
+# ── Validation Report for Test Mode ───────────────────────────────────────────────
+
 rule validate_test_results:
     input:
-        database="results/lsr_database.tsv",
-        test_csv=config["test_genome_csv"]
+        metadata = "data/mge_metadata.tsv",
+        fasta = "data/lsr_candidates.faa"
     output:
-        report="results/test_validation_report.txt"
-    run:
-        import pandas as pd
-        expected = pd.read_csv(input.test_csv)
-        found    = pd.read_csv(input.database, sep="\t")
-
-        lines = []
-        for _, row in expected.iterrows():
-            acc  = row["accession"]
-            exp  = row["expected_lsr"]
-            unique_label = f"{row['label']}_{acc}"
-            hits = found[found["source_genome"] == unique_label]
-            detected = len(hits) > 0
-            status = "PASS" if (detected == exp or exp == "Unknown") else "FAIL"
-            lines.append(f"{status}\t{acc}\t{row['label']}\texpected={exp}\tdetected={detected}\thits={len(hits)}")
-
-        with open(output.report, "w") as f:
-            f.write("\n".join(lines) + "\n")
-        
-        print(open(output.report).read())
+        log = "results/test_validation_report.txt",
+        html = "results/test_validation_alignment.html"
+    conda:
+        "envs/mafft.yaml"
+    script:
+        "scripts/validate_test_results.py"

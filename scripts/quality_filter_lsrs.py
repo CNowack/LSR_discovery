@@ -38,22 +38,39 @@ def get_core_homology(attL, attR, min_bp, max_bp):
                 return kmer
     return None
 
-def parse_prodigal_coords(faa_path):
-    coords = {}
+def parse_prodigal_faa(faa_path):
+    """Parses both the coordinates from the header AND the amino acid sequence."""
+    data = {}
     if not os.path.exists(faa_path):
-        return coords
+        return data
     with open(faa_path, 'r') as f:
+        prot_id = None
+        coords = {}
+        seq = []
         for line in f:
+            line = line.strip()
             if line.startswith(">"):
-                parts = line.strip().split(' # ')
+                # Save the previous record before starting a new one
+                if prot_id:
+                    data[prot_id] = {'coords': coords, 'seq': "".join(seq)}
+                
+                parts = line.split(' # ')
                 if len(parts) >= 4:
                     prot_id = parts[0][1:].split()[0]
                     start = int(parts[1])
                     end = int(parts[2])
                     strand = int(parts[3])
                     contig = prot_id.rsplit('_', 1)[0]
-                    coords[prot_id] = {'contig': contig, 'start': start, 'end': end, 'strand': strand}
-    return coords
+                    coords = {'contig': contig, 'start': start, 'end': end, 'strand': strand}
+                else:
+                    prot_id = None
+                seq = []
+            else:
+                seq.append(line)
+        # Catch the final record in the file
+        if prot_id:
+            data[prot_id] = {'coords': coords, 'seq': "".join(seq)}
+    return data
 
 def main():
     mge_files = snakemake.input.mge_data
@@ -73,8 +90,11 @@ def main():
 
     genome_map = {}
     for f in mge_files:
-        gid = f.split('/')[-2]
+        parts = f.split('/')
+        batch = parts[-3]
+        gid = parts[-2]
         genome_map.setdefault(gid, {})['mge'] = f
+        genome_map[gid]['batch'] = batch
     
     for f in hmmer_files:
         gid = os.path.basename(f).replace('.tblout', '')
@@ -90,6 +110,7 @@ def main():
         hmmer_path = files.get('hmmer')
         att_path = files.get('att')
         faa_path = files.get('faa')
+        batch = files.get('batch')
         
         if not all([mge_path, hmmer_path, att_path]) or not all(os.path.exists(p) for p in [mge_path, hmmer_path, att_path]):
             continue
@@ -108,10 +129,10 @@ def main():
             df_mge = df_mge.sort_values(by='method')
         df_mge = df_mge.drop_duplicates(subset=['pair_id'], keep='first')
 
-        prot_coords = parse_prodigal_coords(faa_path)
+        # Extract both coordinates AND amino acid sequences
+        prot_data = parse_prodigal_faa(faa_path)
         
-        # Load the genome FASTA for this isolate to extract the LSR sequence
-        genome_fasta_path = f"data/genomes/{genome_id}.fna"
+        genome_fasta_path = f"data/genomes/{batch}/{genome_id}.fna"
         genome_seqs = load_fasta(genome_fasta_path)
 
         for _, mge_row in df_mge.iterrows():
@@ -143,10 +164,10 @@ def main():
 
             for _, hmm_hit in df_hmmer.iterrows():
                 protein_id = hmm_hit[0]
-                if protein_id not in prot_coords:
+                if protein_id not in prot_data:
                     continue
                 
-                p_data = prot_coords[protein_id]
+                p_data = prot_data[protein_id]['coords']
                 if p_data['contig'] != mge_contig:
                     continue
                 
@@ -161,9 +182,12 @@ def main():
                     break 
 
             if valid_lsr_found:
-                # Extract the DNA sequence directly from the whole genome
+                # 1. Grab Amino Acid sequence (from the .faa file parsing)
+                lsr_aa_seq = prot_data[associated_lsr]['seq']
+
+                # 2. Grab DNA sequence (from the whole genome .fna slicing)
                 lsr_dna_seq = "NOT_FOUND"
-                p_data = prot_coords[associated_lsr]
+                p_data = prot_data[associated_lsr]['coords']
                 
                 matched_contig = p_data['contig']
                 if matched_contig not in genome_seqs:
@@ -182,6 +206,7 @@ def main():
                     'mge_size': mge_size,
                     'core_homology': core_seq,
                     'lsr_dna_seq': lsr_dna_seq,
+                    'lsr_aa_seq': lsr_aa_seq, # Added amino acid sequence to dictionary
                     'attL_seq': attL_seq,
                     'attR_seq': attR_seq
                 })
@@ -190,10 +215,16 @@ def main():
     
     if not df_out.empty:
         df_out = df_out.drop_duplicates()
-        df_out.to_csv(out_tsv, sep='\t', index=False)
+        
+        # Save the TSV
+        tsv_cols = [c for c in df_out.columns if c != 'lsr_aa_seq']
+        df_out[tsv_cols].to_csv(out_tsv, sep='\t', index=False)
+        
+        # Save the FASTA
         with open(out_fasta, 'w') as f:
             for _, row in df_out.iterrows():
-                f.write(f">{row['lsr_id']}_{row['pair_id']}\nSEQUENCE_PLACEHOLDER\n")
+                # Write the actual amino acid sequence here
+                f.write(f">{row['lsr_id']}_{row['pair_id']}\n{row['lsr_aa_seq']}\n")
     else:
         pd.DataFrame(columns=['source_genome', 'lsr_id', 'pair_id', 'mge_size', 'core_homology', 'lsr_dna_seq', 'attL_seq', 'attR_seq']).to_csv(out_tsv, sep='\t', index=False)
         open(out_fasta, 'w').close()
